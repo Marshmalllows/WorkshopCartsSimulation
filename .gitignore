@@ -1,0 +1,37 @@
+# Build results
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+*.DotSettings.user
+
+# Tests
+TestResults/
+*.trx
+coverage*.json
+coverage*.xml
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
