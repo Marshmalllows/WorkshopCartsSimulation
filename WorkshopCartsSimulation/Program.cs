@@ -21,8 +21,23 @@ switch (mode)
     case "compare":
         ComparisonExperiment.Run();
         break;
+    case "runlength":
+        RunLengthExperiment.Run();
+        break;
+    case "audit":
+        AuditExperiment.Run();
+        break;
+    case "trace":
+        TraceExperiment.Run();
+        break;
+    case "load":
+        LoadExperiment.Run();
+        break;
+    case "carts":
+        CartCountExperiment.Run();
+        break;
     default:
-        Console.WriteLine($"Unknown mode '{mode}'. Available modes: demo, verify, warmup, runs, compare.");
+        Console.WriteLine($"Unknown mode '{mode}'. Available modes: demo, verify, warmup, runlength, runs, compare, audit, trace, load, carts.");
         return 1;
 }
 

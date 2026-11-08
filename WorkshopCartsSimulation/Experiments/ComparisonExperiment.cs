@@ -8,29 +8,15 @@ namespace WorkshopCartsSimulation.Experiments;
 internal static class ComparisonExperiment
 {
     private const int ReplicationCount = 100;
-    private const string OutputFile = "comparison.csv";
+    private const double DifferenceAccuracy = 0.005;
+    private const string SummaryFile = "comparison.csv";
+    private const string RunsFile = "comparison_runs.csv";
 
     public static void Run()
     {
-        var machines = WorkshopParameters.DefaultMachineCount;
-        var shared = CartAssignment.Shared(3, machines);
-        var pairs = CartAssignment.Dedicated(machines, [0, 1], [2, 3], [4]);
-        var nearSingle = CartAssignment.Dedicated(machines, [0], [1, 2], [3, 4]);
-        var overlapping = CartAssignment.Dedicated(machines, [0, 1, 2], [1, 2, 3], [2, 3, 4]);
-
-        var variants = new (string Name, CartAssignment CartsA, CartAssignment CartsB)[]
-        {
-            ("V1 all shared", shared, shared),
-            ("V2 dedicated {0,1}{2,3}{4}", pairs, pairs),
-            ("V3 A shared, B dedicated", shared, pairs),
-            ("V4 A dedicated, B shared", pairs, shared),
-            ("V5 dedicated {0}{1,2}{3,4}", nearSingle, nearSingle),
-            ("V6 overlapping {0-2}{1-3}{2-4}", overlapping, overlapping),
-        };
-
+        var variants = AssignmentVariants.All;
         var results = variants
-            .Select(variant => Replications.Run(
-                new WorkshopParameters { CartsA = variant.CartsA, CartsB = variant.CartsB }, ReplicationCount))
+            .Select(variant => Replications.Run(variant.Parameters(), ReplicationCount))
             .ToList();
         var baseline = results[0];
 
@@ -40,8 +26,8 @@ internal static class ComparisonExperiment
 
         var headers = new[]
         {
-            "Variant", "Profit/t", "+/-", "Diff vs V1", "+/-", "Significant", "Throughput", "Lq", "Processing",
-            "Cart A", "Cart B",
+            "Variant", "Profit/t", "+/-", "Diff vs V1", "+/-", "Significant", "Throughput", "Lq", "W", "Processing",
+            "Blocked", "Cart A", "Cart B",
         };
         var summaries = variants.Select((variant, i) => Summarize(variant.Name, results[i], baseline)).ToList();
         var rows = summaries.Select(summary => (IReadOnlyList<string>)
@@ -54,7 +40,9 @@ internal static class ComparisonExperiment
             summary.Difference is { } s ? (s.Lower > 0 || s.Upper < 0 ? "yes" : "no") : "-",
             summary.Throughput.ToString("F5"),
             summary.QueueLength.ToString("F1"),
+            summary.TimeInSystem.ToString("F0"),
             summary.Processing.ToString("F3"),
+            summary.Blocked.ToString("F3"),
             summary.CartA.ToString("F3"),
             summary.CartB.ToString("F3"),
         ]).ToList();
@@ -64,8 +52,77 @@ internal static class ComparisonExperiment
         Console.WriteLine();
         Console.WriteLine($"Best variant: {best.Name} ({best.Profit.Mean:F4} +/- {best.Profit.HalfWidth:F4} per time unit)");
 
-        WriteCsv(summaries);
-        Console.WriteLine($"Summary saved to {Path.GetFullPath(OutputFile)}");
+        Console.WriteLine();
+        Console.WriteLine("Required runs for the difference with V1 by the Chebyshev inequality: " +
+                          $"p = 20 * (s / e)^2, e = {DifferenceAccuracy}");
+        PrintDifferenceRuns(variants, results);
+
+        Console.WriteLine();
+        Console.WriteLine("Analysis of variance (factor: cart assignment variant)");
+        PrintAnova(variants, results);
+
+        WriteSummaryCsv(summaries);
+        WriteRunsCsv(variants, results);
+        Console.WriteLine();
+        Console.WriteLine($"Summary saved to {Path.GetFullPath(SummaryFile)}");
+        Console.WriteLine($"Per-run values saved to {Path.GetFullPath(RunsFile)}");
+    }
+
+    private static void PrintDifferenceRuns(IReadOnlyList<AssignmentVariant> variants,
+        IReadOnlyList<IReadOnlyList<WorkshopResult>> results)
+    {
+        var headers = new[] { "Difference", "Mean", "Std dev", "Accuracy e", "Runs p" };
+        var rows = Enumerable.Range(1, variants.Count - 1).Select(i =>
+        {
+            var difference = new TallyStatistic();
+            for (var run = 0; run < results[i].Count; run++)
+                difference.Add(results[i][run].ProfitPerTimeUnit - results[0][run].ProfitPerTimeUnit);
+            var runs = (int)Math.Ceiling(20 * Math.Pow(difference.StandardDeviation / DifferenceAccuracy, 2));
+            return (IReadOnlyList<string>)
+            [
+                $"{variants[i].Code} - {variants[0].Code}",
+                difference.Mean.ToString("+0.0000;-0.0000"),
+                difference.StandardDeviation.ToString("F4"),
+                DifferenceAccuracy.ToString("F3"),
+                runs.ToString(),
+            ];
+        }).ToList();
+        TablePrinter.Print(headers, rows);
+    }
+
+    private static void PrintAnova(IReadOnlyList<AssignmentVariant> variants, IReadOnlyList<IReadOnlyList<WorkshopResult>> results)
+    {
+        var dedicated = Enumerable.Range(1, variants.Count - 1).ToArray();
+        var cases = new (string Response, string Levels, string Method, Func<WorkshopResult, double> Selector, int[] Indexes,
+            bool Blocked)[]
+        {
+            ("Profit/t", "V1-V6", "one-way", r => r.ProfitPerTimeUnit, Enumerable.Range(0, variants.Count).ToArray(), false),
+            ("Profit/t", "V1-V6", "blocks (runs)", r => r.ProfitPerTimeUnit, Enumerable.Range(0, variants.Count).ToArray(), true),
+            ("Profit/t", "V2-V6", "blocks (runs)", r => r.ProfitPerTimeUnit, dedicated, true),
+            ("W", "V1-V6", "one-way", r => r.MeanTimeInSystem, Enumerable.Range(0, variants.Count).ToArray(), false),
+            ("W", "V1-V6", "blocks (runs)", r => r.MeanTimeInSystem, Enumerable.Range(0, variants.Count).ToArray(), true),
+        };
+
+        var headers = new[] { "Response", "Levels", "Method", "D_F", "D_R", "F", "df", "F crit", "p-value", "Effect" };
+        var rows = cases.Select(c =>
+        {
+            var groups = c.Indexes.Select(i => (IReadOnlyList<double>)results[i].Select(c.Selector).ToArray()).ToList();
+            var anova = c.Blocked ? VarianceAnalysis.RandomizedBlocks(groups) : VarianceAnalysis.OneWay(groups);
+            return (IReadOnlyList<string>)
+            [
+                c.Response,
+                c.Levels,
+                c.Method,
+                anova.FactorVariance.ToString("G4"),
+                anova.ResidualVariance.ToString("G4"),
+                anova.F.ToString("F2"),
+                $"({anova.FactorDf}; {anova.ResidualDf})",
+                anova.FCritical.ToString("F3"),
+                anova.PValue < 1e-4 ? "< 0.0001" : anova.PValue.ToString("F4"),
+                anova.IsSignificant ? "significant" : "not significant",
+            ];
+        }).ToList();
+        TablePrinter.Print(headers, rows);
     }
 
     private static VariantSummary Summarize(string name, IReadOnlyList<WorkshopResult> results,
@@ -86,27 +143,45 @@ internal static class ComparisonExperiment
             isBaseline ? null : ConfidenceInterval.FromSample(difference),
             results.Average(r => r.ProcessedUnits / r.ObservationTime),
             results.Average(r => r.MeanQueueLength),
+            results.Average(r => r.MeanTimeInSystem),
             results.Average(r => r.MachineProcessing.Average()),
+            results.Average(r => r.MachineBlocked.Average()),
             results.Average(r => r.CartAUtilization),
             results.Average(r => r.CartBUtilization));
     }
 
-    private static void WriteCsv(IEnumerable<VariantSummary> summaries)
+    private static void WriteSummaryCsv(IEnumerable<VariantSummary> summaries)
     {
         var builder = new StringBuilder("variant;profit_rate;profit_half_width;diff_vs_v1;diff_half_width;" +
-                                        "throughput;queue_length;processing;cart_a;cart_b");
+                                        "throughput;queue_length;time_in_system;processing;blocked;cart_a;cart_b");
         builder.AppendLine();
         foreach (var s in summaries)
         {
             var values = new[]
             {
                 s.Profit.Mean, s.Profit.HalfWidth, s.Difference?.Mean ?? 0, s.Difference?.HalfWidth ?? 0,
-                s.Throughput, s.QueueLength, s.Processing, s.CartA, s.CartB,
+                s.Throughput, s.QueueLength, s.TimeInSystem, s.Processing, s.Blocked, s.CartA, s.CartB,
             };
             builder.AppendLine(s.Name + ";" + string.Join(";", values.Select(v => v.ToString("G6", CultureInfo.InvariantCulture))));
         }
 
-        File.WriteAllText(OutputFile, builder.ToString());
+        File.WriteAllText(SummaryFile, builder.ToString());
+    }
+
+    private static void WriteRunsCsv(IReadOnlyList<AssignmentVariant> variants, IReadOnlyList<IReadOnlyList<WorkshopResult>> results)
+    {
+        var builder = new StringBuilder("run;" + string.Join(";", variants.Select(v => v.Code + "_profit_rate")) + ";" +
+                                        string.Join(";", variants.Select(v => v.Code + "_time_in_system")));
+        builder.AppendLine();
+        for (var run = 0; run < results[0].Count; run++)
+        {
+            var values = results.Select(r => r[run].ProfitPerTimeUnit)
+                .Concat(results.Select(r => r[run].MeanTimeInSystem));
+            builder.AppendLine((run + 1) + ";" +
+                               string.Join(";", values.Select(v => v.ToString("G6", CultureInfo.InvariantCulture))));
+        }
+
+        File.WriteAllText(RunsFile, builder.ToString());
     }
 
     private sealed record VariantSummary(
@@ -115,7 +190,9 @@ internal static class ComparisonExperiment
         ConfidenceInterval? Difference,
         double Throughput,
         double QueueLength,
+        double TimeInSystem,
         double Processing,
+        double Blocked,
         double CartA,
         double CartB);
 }

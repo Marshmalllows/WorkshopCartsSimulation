@@ -22,6 +22,8 @@ public sealed record WorkshopResult
 
     public required IReadOnlyList<double> MachineProcessing { get; init; }
 
+    public required IReadOnlyList<double> MachineBlocked { get; init; }
+
     public required double CartAUtilization { get; init; }
 
     public required double CartBUtilization { get; init; }

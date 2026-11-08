@@ -41,7 +41,37 @@ internal static class ReplicationExperiment
         Console.WriteLine();
         Console.WriteLine($"Required runs for half-width {RequiredHalfWidth}: n = (t * s / e)^2 = " +
                           $"({t:F3} * {all.StandardDeviation:F4} / {RequiredHalfWidth})^2 = {required}");
+
+        Console.WriteLine();
+        Console.WriteLine("Required runs by the Chebyshev inequality: p = s^2 / (e^2 * (1 - gamma)) = 20 * (s / e)^2, gamma = 0.95");
+        var chebyshevHeaders = new[] { "Response", "Mean", "Std dev", "Accuracy e", "Runs p" };
+        var chebyshevRows = ChebyshevResponses.Select(response =>
+        {
+            var sample = new TallyStatistic();
+            foreach (var result in results)
+                sample.Add(response.Selector(result));
+            var runs = (int)Math.Ceiling(20 * Math.Pow(sample.StandardDeviation / response.Accuracy, 2));
+            return (IReadOnlyList<string>)
+            [
+                response.Name,
+                sample.Mean.ToString(response.Format),
+                sample.StandardDeviation.ToString(response.Format),
+                response.Accuracy.ToString(response.Format),
+                runs.ToString(),
+            ];
+        }).ToList();
+        TablePrinter.Print(chebyshevHeaders, chebyshevRows);
     }
+
+    private static readonly (string Name, Func<WorkshopResult, double> Selector, double Accuracy, string Format)[]
+        ChebyshevResponses =
+        [
+            ("Profit per time unit", r => r.ProfitPerTimeUnit, 0.01, "F4"),
+            ("Throughput", r => r.ProcessedUnits / r.ObservationTime, 0.0001, "F6"),
+            ("Machine processing share", r => r.MachineProcessing.Average(), 0.009, "F4"),
+            ("Cart A utilization", r => r.CartAUtilization, 0.0015, "F4"),
+            ("Cart B utilization", r => r.CartBUtilization, 0.0015, "F4"),
+        ];
 
     private static TallyStatistic Collect(IEnumerable<WorkshopResult> results)
     {

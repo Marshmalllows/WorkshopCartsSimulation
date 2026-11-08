@@ -17,6 +17,7 @@ public sealed class Workshop
     private readonly bool[] _cartBBusy;
     private readonly WorkshopStatistics _statistics;
     private long _unitsInSystem;
+    private long _nextUnitId;
 
     public Workshop(WorkshopParameters parameters, int seed)
     {
@@ -37,6 +38,12 @@ public sealed class Workshop
     }
 
     public double Time => _simulator.Time;
+
+    public Action<CartDispatch>? CartDispatched { get; set; }
+
+    public Action<WorkshopSnapshot>? EventCompleted { get; set; }
+
+    public Action<double, string>? Trace { get; set; }
 
     public WorkshopResult Run(double endTime, double warmUpTime = 0)
     {
@@ -94,6 +101,7 @@ public sealed class Workshop
     {
         DispatchCartsA();
         DispatchCartsB();
+        EventCompleted?.Invoke(TakeSnapshot());
         _statistics.Observe(
             _simulator.Time,
             _waitingUnits.Count,
@@ -106,7 +114,9 @@ public sealed class Workshop
     {
         _statistics.ArrivedUnits++;
         _unitsInSystem++;
-        _waitingUnits.Enqueue(new Unit(_simulator.Time, _processingTime.Next()));
+        var unit = new Unit(++_nextUnitId, _simulator.Time, _processingTime.Next());
+        _waitingUnits.Enqueue(unit);
+        Log($"unit {unit.Id} arrives, queue = {_waitingUnits.Count}");
         _simulator.Schedule(_interarrivalTime.Next(), Arrive);
     }
 
@@ -114,6 +124,7 @@ public sealed class Workshop
     {
         while (_waitingUnits.Count > 0 && TryFindDelivery(out var machine, out var cart))
         {
+            ReportDispatch(CartType.A, cart, machine);
             var unit = _waitingUnits.Dequeue();
             _statistics.WaitingTime.Add(_simulator.Time - unit.ArrivalTime);
             _machineStates[machine] = MachineState.AwaitingDelivery;
@@ -122,8 +133,9 @@ public sealed class Workshop
 
             var loaded = _parameters.LoadedTravelTime(machine);
             var empty = _parameters.EmptyTravelTime(machine);
-            _simulator.Schedule(loaded, () => StartProcessing(machine, unit.ProcessingTime));
-            _simulator.Schedule(loaded + empty, () => _cartABusy[cart] = false);
+            Log($"cart A{cart} takes unit {unit.Id} to machine {machine}, arrives at {_simulator.Time + loaded:F2}");
+            _simulator.Schedule(loaded, () => StartProcessing(machine, unit));
+            _simulator.Schedule(loaded + empty, () => ReleaseCartA(cart));
         }
     }
 
@@ -143,16 +155,24 @@ public sealed class Workshop
         return false;
     }
 
-    private void StartProcessing(int machine, double processingTime)
+    private void ReleaseCartA(int cart)
+    {
+        _cartABusy[cart] = false;
+        Log($"cart A{cart} is back at machine 0");
+    }
+
+    private void StartProcessing(int machine, Unit unit)
     {
         _machineStates[machine] = MachineState.Processing;
-        _simulator.Schedule(processingTime, () => FinishProcessing(machine));
+        Log($"machine {machine} starts unit {unit.Id}, ends at {_simulator.Time + unit.ProcessingTime:F2}");
+        _simulator.Schedule(unit.ProcessingTime, () => FinishProcessing(machine));
     }
 
     private void FinishProcessing(int machine)
     {
         _machineStates[machine] = MachineState.AwaitingPickup;
         _machinesAwaitingPickup.Add(machine);
+        Log($"machine {machine} finished unit {_unitOnMachine[machine]!.Id}, waits for cart B");
     }
 
     private void DispatchCartsB()
@@ -167,12 +187,14 @@ public sealed class Workshop
                 continue;
             }
 
+            ReportDispatch(CartType.B, cart, machine);
             _machinesAwaitingPickup.RemoveAt(i);
             _machineStates[machine] = MachineState.PickupScheduled;
             _cartBBusy[cart] = true;
 
             var empty = _parameters.EmptyTravelTime(machine);
             var loaded = _parameters.LoadedTravelTime(machine);
+            Log($"cart B{cart} goes to machine {machine}, arrives at {_simulator.Time + empty:F2}");
             _simulator.Schedule(empty, () => PickUp(machine, cart, loaded));
         }
     }
@@ -182,6 +204,7 @@ public sealed class Workshop
         var unit = _unitOnMachine[machine]!;
         _unitOnMachine[machine] = null;
         _machineStates[machine] = MachineState.Free;
+        Log($"cart B{cart} picks up unit {unit.Id}, machine {machine} is free");
         _simulator.Schedule(travelToStorage, () => Store(unit, cart));
     }
 
@@ -191,7 +214,26 @@ public sealed class Workshop
         _statistics.TimeInSystem.Add(_simulator.Time - unit.ArrivalTime);
         _unitsInSystem--;
         _cartBBusy[cart] = false;
+        Log($"cart B{cart} stores unit {unit.Id}, time in system = {_simulator.Time - unit.ArrivalTime:F2}");
     }
+
+    private void ReportDispatch(CartType type, int cart, int machine)
+    {
+        if (CartDispatched is null)
+            return;
+
+        CartDispatched(new CartDispatch(type, cart, machine, TakeSnapshot()));
+    }
+
+    private WorkshopSnapshot TakeSnapshot() => new(
+        _simulator.Time,
+        _waitingUnits.Count,
+        _machineStates.ToArray(),
+        _cartABusy.ToArray(),
+        _cartBBusy.ToArray(),
+        _machinesAwaitingPickup.ToArray());
+
+    private void Log(string message) => Trace?.Invoke(_simulator.Time, message);
 
     private static int FindFreeCart(bool[] busy, CartAssignment assignment, int machine)
     {
@@ -224,6 +266,7 @@ public sealed class Workshop
             MeanTimeInSystem = _statistics.TimeInSystem.Mean,
             MachineOccupancy = _statistics.MachineOccupied.Select(s => s.Mean(time)).ToArray(),
             MachineProcessing = _statistics.MachineProcessing.Select(s => s.Mean(time)).ToArray(),
+            MachineBlocked = _statistics.MachineBlocked.Select(s => s.Mean(time)).ToArray(),
             CartAUtilization = _statistics.BusyCartsA.Mean(time) / _parameters.CartsA.CartCount,
             CartBUtilization = _statistics.BusyCartsB.Mean(time) / _parameters.CartsB.CartCount,
             Revenue = revenue,
@@ -231,7 +274,7 @@ public sealed class Workshop
         };
     }
 
-    private sealed record Unit(double ArrivalTime, double ProcessingTime);
+    private sealed record Unit(long Id, double ArrivalTime, double ProcessingTime);
 
     private sealed record SamplePoint(double Time, double QueueIntegral, long ProcessedUnits, double TimeInSystemSum);
 }
