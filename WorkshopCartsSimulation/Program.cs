@@ -15,8 +15,11 @@ switch (mode)
     case "warmup":
         WarmUpExperiment.Run();
         break;
+    case "runs":
+        ReplicationExperiment.Run();
+        break;
     default:
-        Console.WriteLine($"Unknown mode '{mode}'. Available modes: demo, verify, warmup.");
+        Console.WriteLine($"Unknown mode '{mode}'. Available modes: demo, verify, warmup, runs.");
         return 1;
 }
 
