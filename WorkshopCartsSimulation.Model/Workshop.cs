@@ -15,8 +15,8 @@ public sealed class Workshop
     private readonly List<int> _machinesAwaitingPickup = [];
     private readonly bool[] _cartABusy;
     private readonly bool[] _cartBBusy;
-    private long _arrivedUnits;
-    private long _processedUnits;
+    private readonly WorkshopStatistics _statistics;
+    private long _unitsInSystem;
 
     public Workshop(WorkshopParameters parameters, int seed)
     {
@@ -32,28 +32,41 @@ public sealed class Workshop
         _unitOnMachine = new Unit?[parameters.MachineCount];
         _cartABusy = new bool[parameters.CartsA.CartCount];
         _cartBBusy = new bool[parameters.CartsB.CartCount];
+        _statistics = new WorkshopStatistics(parameters.MachineCount);
     }
 
     public double Time => _simulator.Time;
 
-    public WorkshopResult Run(double endTime)
+    public WorkshopResult Run(double endTime, double warmUpTime = 0)
     {
+        if (warmUpTime < 0 || warmUpTime >= endTime)
+            throw new ArgumentOutOfRangeException(nameof(warmUpTime), "Warm-up time must be in [0, endTime).");
+
         _simulator.Schedule(_interarrivalTime.Next(), Arrive);
-        _simulator.Run(endTime, Dispatch);
+        if (warmUpTime > 0)
+            _simulator.Schedule(warmUpTime, () => _statistics.Reset(_simulator.Time));
+        _simulator.Run(endTime, AfterEvent);
         return CollectResult();
+    }
+
+    private void AfterEvent()
+    {
+        DispatchCartsA();
+        DispatchCartsB();
+        _statistics.Observe(
+            _simulator.Time,
+            _waitingUnits.Count,
+            _machineStates,
+            _cartABusy.Count(busy => busy),
+            _cartBBusy.Count(busy => busy));
     }
 
     private void Arrive()
     {
-        _arrivedUnits++;
+        _statistics.ArrivedUnits++;
+        _unitsInSystem++;
         _waitingUnits.Enqueue(new Unit(_simulator.Time));
         _simulator.Schedule(_interarrivalTime.Next(), Arrive);
-    }
-
-    private void Dispatch()
-    {
-        DispatchCartsA();
-        DispatchCartsB();
     }
 
     private void DispatchCartsA()
@@ -61,6 +74,7 @@ public sealed class Workshop
         while (_waitingUnits.Count > 0 && TryFindDelivery(out var machine, out var cart))
         {
             var unit = _waitingUnits.Dequeue();
+            _statistics.WaitingTime.Add(_simulator.Time - unit.ArrivalTime);
             _machineStates[machine] = MachineState.AwaitingDelivery;
             _unitOnMachine[machine] = unit;
             _cartABusy[cart] = true;
@@ -124,14 +138,17 @@ public sealed class Workshop
 
     private void PickUp(int machine, int cart, double travelToStorage)
     {
+        var unit = _unitOnMachine[machine]!;
         _unitOnMachine[machine] = null;
         _machineStates[machine] = MachineState.Free;
-        _simulator.Schedule(travelToStorage, () => Store(cart));
+        _simulator.Schedule(travelToStorage, () => Store(unit, cart));
     }
 
-    private void Store(int cart)
+    private void Store(Unit unit, int cart)
     {
-        _processedUnits++;
+        _statistics.ProcessedUnits++;
+        _statistics.TimeInSystem.Add(_simulator.Time - unit.ArrivalTime);
+        _unitsInSystem--;
         _cartBBusy[cart] = false;
     }
 
@@ -149,14 +166,28 @@ public sealed class Workshop
     private WorkshopResult CollectResult()
     {
         var time = _simulator.Time;
+        var duration = time - _statistics.StartTime;
         var cartCount = _parameters.CartsA.CartCount + _parameters.CartsB.CartCount;
-        return new WorkshopResult(
-            time,
-            _arrivedUnits,
-            _processedUnits,
-            _arrivedUnits - _processedUnits,
-            _processedUnits * _parameters.ProfitPerUnit,
-            cartCount * _parameters.CartCostPerTimeUnit * time);
+        var revenue = _statistics.ProcessedUnits * _parameters.ProfitPerUnit;
+        var cartCost = cartCount * _parameters.CartCostPerTimeUnit * duration;
+
+        return new WorkshopResult
+        {
+            ObservationTime = duration,
+            ArrivedUnits = _statistics.ArrivedUnits,
+            ProcessedUnits = _statistics.ProcessedUnits,
+            UnitsInSystemAtEnd = _unitsInSystem,
+            MeanQueueLength = _statistics.QueueLength.Mean(time),
+            MaxQueueLength = _statistics.QueueLength.Max,
+            MeanWaitingTime = _statistics.WaitingTime.Mean,
+            MeanTimeInSystem = _statistics.TimeInSystem.Mean,
+            MachineOccupancy = _statistics.MachineOccupied.Select(s => s.Mean(time)).ToArray(),
+            MachineProcessing = _statistics.MachineProcessing.Select(s => s.Mean(time)).ToArray(),
+            CartAUtilization = _statistics.BusyCartsA.Mean(time) / _parameters.CartsA.CartCount,
+            CartBUtilization = _statistics.BusyCartsB.Mean(time) / _parameters.CartsB.CartCount,
+            Revenue = revenue,
+            CartCost = cartCost,
+        };
     }
 
     private sealed record Unit(double ArrivalTime);
