@@ -18,8 +18,11 @@ switch (mode)
     case "runs":
         ReplicationExperiment.Run();
         break;
+    case "compare":
+        ComparisonExperiment.Run();
+        break;
     default:
-        Console.WriteLine($"Unknown mode '{mode}'. Available modes: demo, verify, warmup, runs.");
+        Console.WriteLine($"Unknown mode '{mode}'. Available modes: demo, verify, warmup, runs, compare.");
         return 1;
 }
 

@@ -25,9 +25,10 @@ public sealed class Workshop
             parameters.CartsB.MachineCount != parameters.MachineCount)
             throw new ArgumentException("Cart assignments must match the machine count.", nameof(parameters));
 
-        var random = new Random(seed);
-        _interarrivalTime = new ExponentialVariate(parameters.MeanInterarrivalTime, random);
-        _processingTime = new NormalVariate(parameters.ProcessingTimeMean, parameters.ProcessingTimeStdDev, random);
+        var seeds = new Random(seed);
+        _interarrivalTime = new ExponentialVariate(parameters.MeanInterarrivalTime, new Random(seeds.Next()));
+        _processingTime = new NormalVariate(parameters.ProcessingTimeMean, parameters.ProcessingTimeStdDev,
+            new Random(seeds.Next()));
         _machineStates = new MachineState[parameters.MachineCount];
         _unitOnMachine = new Unit?[parameters.MachineCount];
         _cartABusy = new bool[parameters.CartsA.CartCount];
@@ -105,7 +106,7 @@ public sealed class Workshop
     {
         _statistics.ArrivedUnits++;
         _unitsInSystem++;
-        _waitingUnits.Enqueue(new Unit(_simulator.Time));
+        _waitingUnits.Enqueue(new Unit(_simulator.Time, _processingTime.Next()));
         _simulator.Schedule(_interarrivalTime.Next(), Arrive);
     }
 
@@ -121,7 +122,7 @@ public sealed class Workshop
 
             var loaded = _parameters.LoadedTravelTime(machine);
             var empty = _parameters.EmptyTravelTime(machine);
-            _simulator.Schedule(loaded, () => StartProcessing(machine));
+            _simulator.Schedule(loaded, () => StartProcessing(machine, unit.ProcessingTime));
             _simulator.Schedule(loaded + empty, () => _cartABusy[cart] = false);
         }
     }
@@ -142,10 +143,10 @@ public sealed class Workshop
         return false;
     }
 
-    private void StartProcessing(int machine)
+    private void StartProcessing(int machine, double processingTime)
     {
         _machineStates[machine] = MachineState.Processing;
-        _simulator.Schedule(_processingTime.Next(), () => FinishProcessing(machine));
+        _simulator.Schedule(processingTime, () => FinishProcessing(machine));
     }
 
     private void FinishProcessing(int machine)
@@ -230,7 +231,7 @@ public sealed class Workshop
         };
     }
 
-    private sealed record Unit(double ArrivalTime);
+    private sealed record Unit(double ArrivalTime, double ProcessingTime);
 
     private sealed record SamplePoint(double Time, double QueueIntegral, long ProcessedUnits, double TimeInSystemSum);
 }
