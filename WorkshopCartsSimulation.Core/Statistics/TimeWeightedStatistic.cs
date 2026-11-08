@@ -35,9 +35,10 @@ public sealed class TimeWeightedStatistic
         if (duration <= 0)
             return Value;
 
-        var area = _area + Value * (time - _lastTime);
-        return area / duration;
+        return Integral(time) / duration;
     }
+
+    public double Integral(double time) => _area + Value * (time - _lastTime);
 
     public void Reset(double time)
     {

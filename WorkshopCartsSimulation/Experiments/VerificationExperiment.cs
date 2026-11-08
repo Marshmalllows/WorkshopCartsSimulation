@@ -4,10 +4,6 @@ namespace WorkshopCartsSimulation.Experiments;
 
 internal static class VerificationExperiment
 {
-    private const double SimulationTime = 100_000;
-    private const double WarmUpTime = 10_000;
-    private const int Seed = 1;
-
     public static void Run()
     {
         var baseline = new WorkshopParameters();
@@ -18,6 +14,7 @@ internal static class VerificationExperiment
             ("Low load, constant processing", baseline with { MeanInterarrivalTime = 2000, ProcessingTimeStdDev = 0 }),
             ("Faster processing norm(300, 80)", baseline with { ProcessingTimeMean = 300 }),
             ("Higher load exp(90)", baseline with { MeanInterarrivalTime = 90 }),
+            ("Saturation exp(30)", baseline with { MeanInterarrivalTime = 30 }),
             ("One cart of each type", baseline with
             {
                 CartsA = CartAssignment.Shared(1, baseline.MachineCount),
@@ -28,18 +25,19 @@ internal static class VerificationExperiment
 
         var headers = new[]
         {
-            "Scenario", "Lambda", "Processed", "Lq", "Lambda*Wq", "Wq", "W", "Processing", "Cart A", "Cart B",
+            "Scenario", "Lambda", "Throughput", "Processed", "Lq", "Lambda*Wq", "Wq", "W", "Processing", "Cart A", "Cart B",
             "Profit", "Profit/t",
         };
 
         var rows = scenarios.Select(scenario =>
         {
-            var result = new Workshop(scenario.Parameters, Seed).Run(SimulationTime, WarmUpTime);
+            var result = new Workshop(scenario.Parameters, ExperimentSettings.Seed).Run(ExperimentSettings.SimulationTime, ExperimentSettings.WarmUpTime);
             var lambda = result.ArrivedUnits / result.ObservationTime;
             return (IReadOnlyList<string>)
             [
                 scenario.Name,
                 lambda.ToString("F5"),
+                (result.ProcessedUnits / result.ObservationTime).ToString("F5"),
                 result.ProcessedUnits.ToString(),
                 result.MeanQueueLength.ToString("F2"),
                 (lambda * result.MeanWaitingTime).ToString("F2"),
@@ -53,7 +51,7 @@ internal static class VerificationExperiment
             ];
         }).ToList();
 
-        Console.WriteLine($"Verification (T = {SimulationTime}, warm-up = {WarmUpTime}, seed = {Seed})");
+        Console.WriteLine($"Verification (T = {ExperimentSettings.SimulationTime}, warm-up = {ExperimentSettings.WarmUpTime}, seed = {ExperimentSettings.Seed})");
         Console.WriteLine();
         TablePrinter.Print(headers, rows);
         Console.WriteLine();

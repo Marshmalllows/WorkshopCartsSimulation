@@ -9,6 +9,8 @@ public sealed class TallyStatistic
 
     public double Mean => Count > 0 ? _mean : double.NaN;
 
+    public double Sum => _mean * Count;
+
     public double Variance => Count > 1 ? _sumOfSquaredDeviations / (Count - 1) : double.NaN;
 
     public double StandardDeviation => Math.Sqrt(Variance);

@@ -49,6 +49,46 @@ public sealed class Workshop
         return CollectResult();
     }
 
+    public IReadOnlyList<WorkshopSample> RunWithSampling(double endTime, double sampleInterval)
+    {
+        if (sampleInterval <= 0)
+            throw new ArgumentOutOfRangeException(nameof(sampleInterval), "Sample interval must be positive.");
+
+        var samples = new List<WorkshopSample>();
+        var previous = new SamplePoint(0, 0, 0, 0);
+        var cartCount = _parameters.CartsA.CartCount + _parameters.CartsB.CartCount;
+
+        void TakeSample()
+        {
+            var time = _simulator.Time;
+            var current = new SamplePoint(
+                time,
+                _statistics.QueueLength.Integral(time),
+                _statistics.ProcessedUnits,
+                _statistics.TimeInSystem.Sum);
+            var duration = current.Time - previous.Time;
+            var processed = current.ProcessedUnits - previous.ProcessedUnits;
+            var revenue = processed * _parameters.ProfitPerUnit;
+            var cartCost = cartCount * _parameters.CartCostPerTimeUnit * duration;
+
+            samples.Add(new WorkshopSample(
+                time,
+                (current.QueueIntegral - previous.QueueIntegral) / duration,
+                processed,
+                processed > 0 ? (current.TimeInSystemSum - previous.TimeInSystemSum) / processed : double.NaN,
+                (revenue - cartCost) / duration));
+
+            previous = current;
+            if (time + sampleInterval <= endTime)
+                _simulator.Schedule(sampleInterval, TakeSample);
+        }
+
+        _simulator.Schedule(_interarrivalTime.Next(), Arrive);
+        _simulator.Schedule(sampleInterval, TakeSample);
+        _simulator.Run(endTime, AfterEvent);
+        return samples;
+    }
+
     private void AfterEvent()
     {
         DispatchCartsA();
@@ -191,4 +231,6 @@ public sealed class Workshop
     }
 
     private sealed record Unit(double ArrivalTime);
+
+    private sealed record SamplePoint(double Time, double QueueIntegral, long ProcessedUnits, double TimeInSystemSum);
 }

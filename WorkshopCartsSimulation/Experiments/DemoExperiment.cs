@@ -4,10 +4,6 @@ namespace WorkshopCartsSimulation.Experiments;
 
 internal static class DemoExperiment
 {
-    private const double SimulationTime = 100_000;
-    private const double WarmUpTime = 10_000;
-    private const int Seed = 1;
-
     public static void Run()
     {
         var variants = new (string Name, WorkshopParameters Parameters)[]
@@ -22,7 +18,7 @@ internal static class DemoExperiment
 
         foreach (var (name, parameters) in variants)
         {
-            var result = new Workshop(parameters, Seed).Run(SimulationTime, WarmUpTime);
+            var result = new Workshop(parameters, ExperimentSettings.Seed).Run(ExperimentSettings.SimulationTime, ExperimentSettings.WarmUpTime);
             PrintResult(name, parameters, result);
         }
     }
