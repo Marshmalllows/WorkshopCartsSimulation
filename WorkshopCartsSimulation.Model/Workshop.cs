@@ -1,0 +1,163 @@
+using WorkshopCartsSimulation.Core.Distributions;
+using WorkshopCartsSimulation.Core.Simulation;
+
+namespace WorkshopCartsSimulation.Model;
+
+public sealed class Workshop
+{
+    private readonly WorkshopParameters _parameters;
+    private readonly Simulator _simulator = new();
+    private readonly IRandomVariate _interarrivalTime;
+    private readonly IRandomVariate _processingTime;
+    private readonly Queue<Unit> _waitingUnits = new();
+    private readonly MachineState[] _machineStates;
+    private readonly Unit?[] _unitOnMachine;
+    private readonly List<int> _machinesAwaitingPickup = [];
+    private readonly bool[] _cartABusy;
+    private readonly bool[] _cartBBusy;
+    private long _arrivedUnits;
+    private long _processedUnits;
+
+    public Workshop(WorkshopParameters parameters, int seed)
+    {
+        _parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
+        if (parameters.CartsA.MachineCount != parameters.MachineCount ||
+            parameters.CartsB.MachineCount != parameters.MachineCount)
+            throw new ArgumentException("Cart assignments must match the machine count.", nameof(parameters));
+
+        var random = new Random(seed);
+        _interarrivalTime = new ExponentialVariate(parameters.MeanInterarrivalTime, random);
+        _processingTime = new NormalVariate(parameters.ProcessingTimeMean, parameters.ProcessingTimeStdDev, random);
+        _machineStates = new MachineState[parameters.MachineCount];
+        _unitOnMachine = new Unit?[parameters.MachineCount];
+        _cartABusy = new bool[parameters.CartsA.CartCount];
+        _cartBBusy = new bool[parameters.CartsB.CartCount];
+    }
+
+    public double Time => _simulator.Time;
+
+    public WorkshopResult Run(double endTime)
+    {
+        _simulator.Schedule(_interarrivalTime.Next(), Arrive);
+        _simulator.Run(endTime, Dispatch);
+        return CollectResult();
+    }
+
+    private void Arrive()
+    {
+        _arrivedUnits++;
+        _waitingUnits.Enqueue(new Unit(_simulator.Time));
+        _simulator.Schedule(_interarrivalTime.Next(), Arrive);
+    }
+
+    private void Dispatch()
+    {
+        DispatchCartsA();
+        DispatchCartsB();
+    }
+
+    private void DispatchCartsA()
+    {
+        while (_waitingUnits.Count > 0 && TryFindDelivery(out var machine, out var cart))
+        {
+            var unit = _waitingUnits.Dequeue();
+            _machineStates[machine] = MachineState.AwaitingDelivery;
+            _unitOnMachine[machine] = unit;
+            _cartABusy[cart] = true;
+
+            var loaded = _parameters.LoadedTravelTime(machine);
+            var empty = _parameters.EmptyTravelTime(machine);
+            _simulator.Schedule(loaded, () => StartProcessing(machine));
+            _simulator.Schedule(loaded + empty, () => _cartABusy[cart] = false);
+        }
+    }
+
+    private bool TryFindDelivery(out int machine, out int cart)
+    {
+        for (machine = 0; machine < _parameters.MachineCount; machine++)
+        {
+            if (_machineStates[machine] != MachineState.Free)
+                continue;
+            cart = FindFreeCart(_cartABusy, _parameters.CartsA, machine);
+            if (cart >= 0)
+                return true;
+        }
+
+        machine = -1;
+        cart = -1;
+        return false;
+    }
+
+    private void StartProcessing(int machine)
+    {
+        _machineStates[machine] = MachineState.Processing;
+        _simulator.Schedule(_processingTime.Next(), () => FinishProcessing(machine));
+    }
+
+    private void FinishProcessing(int machine)
+    {
+        _machineStates[machine] = MachineState.AwaitingPickup;
+        _machinesAwaitingPickup.Add(machine);
+    }
+
+    private void DispatchCartsB()
+    {
+        for (var i = 0; i < _machinesAwaitingPickup.Count;)
+        {
+            var machine = _machinesAwaitingPickup[i];
+            var cart = FindFreeCart(_cartBBusy, _parameters.CartsB, machine);
+            if (cart < 0)
+            {
+                i++;
+                continue;
+            }
+
+            _machinesAwaitingPickup.RemoveAt(i);
+            _machineStates[machine] = MachineState.PickupScheduled;
+            _cartBBusy[cart] = true;
+
+            var empty = _parameters.EmptyTravelTime(machine);
+            var loaded = _parameters.LoadedTravelTime(machine);
+            _simulator.Schedule(empty, () => PickUp(machine, cart, loaded));
+        }
+    }
+
+    private void PickUp(int machine, int cart, double travelToStorage)
+    {
+        _unitOnMachine[machine] = null;
+        _machineStates[machine] = MachineState.Free;
+        _simulator.Schedule(travelToStorage, () => Store(cart));
+    }
+
+    private void Store(int cart)
+    {
+        _processedUnits++;
+        _cartBBusy[cart] = false;
+    }
+
+    private static int FindFreeCart(bool[] busy, CartAssignment assignment, int machine)
+    {
+        for (var cart = 0; cart < busy.Length; cart++)
+        {
+            if (!busy[cart] && assignment.CanServe(cart, machine))
+                return cart;
+        }
+
+        return -1;
+    }
+
+    private WorkshopResult CollectResult()
+    {
+        var time = _simulator.Time;
+        var cartCount = _parameters.CartsA.CartCount + _parameters.CartsB.CartCount;
+        return new WorkshopResult(
+            time,
+            _arrivedUnits,
+            _processedUnits,
+            _arrivedUnits - _processedUnits,
+            _processedUnits * _parameters.ProfitPerUnit,
+            cartCount * _parameters.CartCostPerTimeUnit * time);
+    }
+
+    private sealed record Unit(double ArrivalTime);
+}

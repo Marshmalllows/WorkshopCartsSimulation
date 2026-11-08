@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkshopCartsSimulation", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkshopCartsSimulation.Core", "WorkshopCartsSimulation.Core\WorkshopCartsSimulation.Core.csproj", "{3E8A1F52-6C1D-4B7E-9A2F-5D0C7B41E8A3}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkshopCartsSimulation.Model", "WorkshopCartsSimulation.Model\WorkshopCartsSimulation.Model.csproj", "{6D2F8A43-1B9C-4E57-8A06-C3E9F4B21D75}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{3E8A1F52-6C1D-4B7E-9A2F-5D0C7B41E8A3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3E8A1F52-6C1D-4B7E-9A2F-5D0C7B41E8A3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3E8A1F52-6C1D-4B7E-9A2F-5D0C7B41E8A3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6D2F8A43-1B9C-4E57-8A06-C3E9F4B21D75}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6D2F8A43-1B9C-4E57-8A06-C3E9F4B21D75}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6D2F8A43-1B9C-4E57-8A06-C3E9F4B21D75}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6D2F8A43-1B9C-4E57-8A06-C3E9F4B21D75}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
